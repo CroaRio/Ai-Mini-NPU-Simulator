@@ -122,7 +122,7 @@ def read_grid_from_console(size, title):
 
 
 def run_mode_1():
-    """모드 1: 3x3 필터 A, B 및 패턴 입력 -> MAC 연산 -> 판정 출력"""
+    """모드 1: 3x3 필터 A, B 입력 및 패턴(직접 입력 또는 자동 생성) -> MAC 연산 -> 판정 출력"""
     print("\n#---------------------------------------")
     print("# [1] 필터 입력")
     print("#---------------------------------------")
@@ -131,9 +131,28 @@ def run_mode_1():
     print("필터 A, B 저장 완료.")
 
     print("\n#---------------------------------------")
-    print("# [2] 패턴 입력")
+    print("# [2] 패턴 입력 / 자동 생성")
     print("#---------------------------------------")
-    pattern = read_grid_from_console(3, "패턴")
+    while True:
+        print("패턴 방식을 선택하세요:")
+        print("1. 직접 입력 (3x3)")
+        print("2. 십자가(Cross) 자동 생성 (3x3)")
+        print("3. X 자동 생성 (3x3)")
+        pat_choice = input("선택: ").strip()
+
+        if pat_choice == "1":
+            pattern = read_grid_from_console(3, "패턴")
+            break
+        if pat_choice == "2":
+            pattern = generate_pattern_by_size(3, "cross")
+            print("3x3 십자가(Cross) 패턴 자동 생성 완료.")
+            break
+        if pat_choice == "3":
+            pattern = generate_pattern_by_size(3, "x")
+            print("3x3 X 패턴 자동 생성 완료.")
+            break
+
+        print("잘못된 선택입니다. 1, 2, 3 중 하나를 입력하세요.")
 
     score_a = compute_mac(pattern, filter_a)
     score_b = compute_mac(pattern, filter_b)
@@ -151,7 +170,7 @@ def run_mode_1():
     else:
         print("판정: B")
 
-    return pattern, filter_a, filter_b  # 성능 분석에서 3×3 평균 연산 시간을 잴 때 바로 활용 가능
+    return pattern, filter_a, filter_b
 
 
 import json
@@ -376,6 +395,148 @@ def print_performance_table(filters_by_size=None, extra_pair_3x3=None, repeats=1
         op_count = n * n
         print(f"{n}×{n:<8} {avg_ms:<16.3f} {op_count}")
 
+def generate_cross_pattern(size, active_val=1.0, bg_val=0.0):
+    """크기 N을 입력받아 N x N 십자가(Cross) 패턴(Grid2D) 생성"""
+    if not isinstance(size, int) or size <= 0:
+        raise ValueError("패턴 크기 N은 1 이상의 정수여야 합니다.")
+
+    mid = size // 2
+    cells = []
+    for r in range(size):
+        row = []
+        for c in range(size):
+            if size % 2 == 1:
+                is_cross = (r == mid or c == mid)
+            else:
+                is_cross = (r in (mid - 1, mid) or c in (mid - 1, mid))
+            row.append(float(active_val if is_cross else bg_val))
+        cells.append(row)
+    return Grid2D(cells)
+
+
+def generate_x_pattern(size, active_val=1.0, bg_val=0.0):
+    """크기 N을 입력받아 N x N X 패턴(Grid2D) 생성"""
+    if not isinstance(size, int) or size <= 0:
+        raise ValueError("패턴 크기 N은 1 이상의 정수여야 합니다.")
+
+    cells = []
+    for r in range(size):
+        row = []
+        for c in range(size):
+            is_x = (r == c) or ((r + c) == (size - 1))
+            row.append(float(active_val if is_x else bg_val))
+        cells.append(row)
+    return Grid2D(cells)
+
+def generate_pattern_by_size(size, kind="cross"):
+    """크기 N과 종류('cross' 또는 'x')를 입력받아 N x N 패턴(Grid2D) 자동 생성"""
+    if not isinstance(size, int) or size <= 0:
+        raise ValueError("패턴 크기 N은 1 이상의 정수여야 합니다.")
+
+    normalized = str(kind).strip().lower()
+    if normalized in ("+", "cross"):
+        return generate_cross_pattern(size)
+    if normalized == "x":
+        return generate_x_pattern(size)
+    raise ValueError(f"지원하지 않는 패턴 종류입니다: '{kind}'")
+
+
+class FlatGrid1D:
+    """N x N 2차원 격자를 길이 N^2인 1차원 리스트로 변환해 저장하는 구조"""
+
+    def __init__(self, data):
+        grid2d = data if isinstance(data, Grid2D) else Grid2D(data)
+        self.size = grid2d.size
+        self.flat_cells = [0.0] * (self.size * self.size)
+        for r in range(self.size):
+            row_offset = r * self.size
+            for c in range(self.size):
+                self.flat_cells[row_offset + c] = grid2d.get(r, c)
+
+    @classmethod
+    def from_grid2d(cls, grid2d):
+        return cls(grid2d)
+
+    def get_1d(self, idx):
+        return self.flat_cells[idx]
+
+    def set_1d(self, idx, value):
+        self.flat_cells[idx] = float(value)
+
+    def get_2d(self, row, col):
+        return self.flat_cells[row * self.size + col]
+
+    def set_2d(self, row, col, value):
+        self.flat_cells[row * self.size + col] = float(value)
+
+
+def compute_mac_flat(pattern_flat, filter_flat):
+    """길이 N^2인 1차원 배열 두 개를 단일 반복문으로 곱해 누적 합산(MAC) 반환"""
+    if pattern_flat.size != filter_flat.size:
+        raise ValueError(
+            f"크기 불일치: 패턴 {pattern_flat.size}x{pattern_flat.size} vs 필터 {filter_flat.size}x{filter_flat.size}"
+        )
+
+    total = 0.0
+    p_cells = pattern_flat.flat_cells
+    f_cells = filter_flat.flat_cells
+    length = len(p_cells)
+    for i in range(length):
+        total += p_cells[i] * f_cells[i]
+    return total
+
+
+def compare_mac_optimization(pattern_grid, filter_grid, repeats=10):
+    """동일 입력·동일 반복 횟수로 2D(기존) vs 1D(최적화) 평균 MAC 시간(ms) 비교"""
+    pattern_flat = FlatGrid1D.from_grid2d(pattern_grid)
+    filter_flat = FlatGrid1D.from_grid2d(filter_grid)
+
+    start_2d = time.perf_counter()
+    for _ in range(repeats):
+        score_2d = compute_mac(pattern_grid, filter_grid)
+    avg_2d_ms = ((time.perf_counter() - start_2d) / repeats) * 1000.0
+
+    start_1d = time.perf_counter()
+    for _ in range(repeats):
+        score_1d = compute_mac_flat(pattern_flat, filter_flat)
+    avg_1d_ms = ((time.perf_counter() - start_1d) / repeats) * 1000.0
+
+    return {
+        "score_2d": score_2d,
+        "score_1d": score_1d,
+        "avg_2d_ms": avg_2d_ms,
+        "avg_1d_ms": avg_1d_ms,
+    }
+
+
+def print_optimization_comparison(filters_by_size=None, extra_pair_3x3=None, repeats=10):
+    """크기별(3x3, 5x5, 13x13, 25x25) 2D vs 1D(길이 N^2) 성능 비교 표 출력"""
+    if filters_by_size is None:
+        filters_by_size = {}
+
+    target_sizes = [3, 5, 13, 25]
+    print("\n#---------------------------------------")
+    print(f"# [최적화 비교] 2D vs 1D(길이 N^2) (평균/{repeats}회)")
+    print("#---------------------------------------")
+    print(f"{'크기':<8} {'2D 평균(ms)':<14} {'1D 평균(ms)':<14} {'차이(ms)'}")
+    print("-" * 52)
+
+    for n in target_sizes:
+        if n == 3 and extra_pair_3x3 is not None:
+            pat_grid, filt_grid = extra_pair_3x3
+        elif n in filters_by_size and "Cross" in filters_by_size[n] and "X" in filters_by_size[n]:
+            pat_grid = generate_cross_pattern(n)
+            filt_grid = filters_by_size[n]["X"]
+        else:
+            pat_grid = generate_cross_pattern(n)
+            filt_grid = generate_x_pattern(n)
+
+        comp = compare_mac_optimization(pat_grid, filt_grid, repeats=repeats)
+        diff_ms = comp["avg_2d_ms"] - comp["avg_1d_ms"]
+        print(
+            f"{n}×{n:<6} {comp['avg_2d_ms']:<14.4f} {comp['avg_1d_ms']:<14.4f} {diff_ms:+.4f}"
+        )
+
 def print_summary(results):     #결과 요약 출력
     """전체 테스트 수, 통과 수, 실패 수 및 실패 케이스 목록/사유 출력"""
     # 전체 테스트 수 / 통과 수 / 실패 수를 출력하고,
@@ -407,7 +568,7 @@ def main():
     # 모드 2: 필터 로드 → 패턴 로드/검증/판정/PASS-FAIL 출력 → 성능 분석(3×3, 5×5, 13×13, 25×25) 출력 → 결과 요약 출력
     # 모드 선택이 잘못되면 안내 문구를 띄우고 다시 선택하도록 반복
     # 모드 1과 모드 2 모두 종료 후 프로그램 종료
-    
+
     while True:
         print("\n=== Mini NPU Simulator ===")
         print("\n[모드 선택]")
@@ -420,6 +581,7 @@ def main():
             avg_ms = measure_mac_avg_ms(pattern, filter_a, repeats=10)
             print(f"연산 시간(평균/10회): {avg_ms:.3f} ms")
             print_performance_table(extra_pair_3x3=(pattern, filter_a), repeats=10)
+            print_optimization_comparison(extra_pair_3x3=(pattern, filter_a), repeats=10)
             break
 
         if choice == "2":
@@ -433,6 +595,7 @@ def main():
 
             results = run_mode_2(json_path)
             print_performance_table(filters_by_size=filters_by_size, repeats=10)
+            print_optimization_comparison(filters_by_size=filters_by_size, repeats=10)
             print_summary(results)
             break
 
